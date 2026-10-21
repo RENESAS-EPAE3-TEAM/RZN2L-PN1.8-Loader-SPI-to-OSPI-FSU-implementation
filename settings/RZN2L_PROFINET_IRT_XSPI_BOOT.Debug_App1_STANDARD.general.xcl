@@ -1,0 +1,15 @@
+"C:\Program Files\IAR Systems\Embedded Workbench 9.2_2\arm\bin\armPROC.dll" 
+
+"C:\Program Files\IAR Systems\Embedded Workbench 9.2_2\arm\bin\armJET.dll" 
+
+"C:\Users\MyPC\Desktop\Renesas_PROFINET_IRT_DEVKIT_V1.8.0\iar_project\rzn2l_xspi_boot\Debug_App1_STANDARD\Exe\RZN2L_PROFINET_IRT_XSPI_BOOT.out" 
+
+--plugin="C:\Program Files\IAR Systems\Embedded Workbench 9.2_2\arm\bin\armLibSupportUniversal.dll" 
+
+--device_macro="C:\Program Files\IAR Systems\Embedded Workbench 9.2_2\arm/config/debugger/Renesas/RZN2L.dmac" 
+
+--flash_loader="C:\Program Files\IAR Systems\Embedded Workbench 9.2_2\arm\config\flashloader\Renesas\MX25UW51245G.board" 
+
+
+
+

@@ -1,0 +1,457 @@
+Loader-only OSPI acceleration (RZ/N2L RSK, MX25UW51245G)
+=====================================================
+
+Scope
+-----
+Boot ROM still loads the first-stage Loader in 1S-1S-1S. Its boot parameters,
+checksum and 0x6000-byte transfer size are unchanged.
+
+SystemInit initializes clocks, Loader data/BSS and the MPU/cache settings.
+bsp_copy_to_ram then configures the xSPI0 pins, temporarily switches Flash and
+controller to 8D-8D-8D, and copies VECTOR, USER_PRG, USER_DATA and
+USER_DATA_NONCACHE. It restores SPI before constructors, POST_C and main.
+PN spi_flash_init and its existing QSPI read/program/erase implementation
+are unchanged. This does not certify their existing runtime behavior.
+
+Implementation
+--------------
+The Loader implementation is in system.c, already relocated in its entirety
+to BTCM by script\fsp_xspi0_boot.icf. It does not call application code,
+the runtime Flash driver, allocation functions or C library copy routines.
+No application data or pin configuration tables are needed before relocation.
+
+Configuration: rzn_cfg\driver\loader_xspi_cfg.h.
+BSP_CFG_LOADER_OSPI_ENABLE defaults to 1. Set it to 0 (or define it as 0 in
+the compiler settings) for an A/B single-line loading measurement.
+The implementation is gated to IAR ROM execution with xSPI0 single-line boot.
+Enable this option only when booting from the MX25UW51245G OSPI device.
+The separate QSPI device selected by CN8 2-3 does not support this DTR mode;
+disable the option when booting from that device.
+BSP_CFG_LOADER_OSPI_PREFETCH_ENABLE defaults to 1. It enables hardware
+prefetch only during DTR copying.
+BSP_CFG_LOADER_OSPI_CACHE_ENABLE defaults to 1. It retains the cacheable
+0x60000000 source alias and invalidates the four read-only Flash source
+ranges before and after copying. Set it to 0 for the non-cache alias.
+This option does not change the global CPU D-cache enable bit or MPU.
+See the final prefetch-plus-cache A/B measurement below.
+
+Flash: volatile CR2[0] DOPI=1; CR2[0x300] DC=5 (10 read dummy clocks).
+Controller: PRTMD=0x3FF, 4 address bytes, EE11 read, 12ED program mapping,
+DS shift=8 at the existing 100 MHz xSPI0 clock, matching the reference setup.
+RDCR2 uses 4 dummy clocks, per MX25UW51245G datasheet command table p.20,
+not the 10 used by the reference application's register-read example.
+Volatile CR2 writes have a delay exceeding tW2V=40 ns.
+Original mode/DC and controller mapping/timing/bridge settings are restored.
+Only volatile configuration registers are written; no Flash sector is erased.
+
+Alignment
+---------
+The ICF already gives the four source/destination blocks >=4-byte alignment
+(vectors: 32 bytes). Source and destination alignment, not just length, is
+required for the uint32_t fast path.
+
+Every explicit CPU DTR Flash load is naturally aligned and 32-bit. The
+default cacheable source is 0x60000000; cache-disabled source selection
+uses its non-cache 0x40000000 alias. Actual external cache-line fills and
+hardware prefetch may read more than an individual CPU word request.
+The bulk path stores aligned uint32_t words.
+MX25UW51245G DTR reads return adjacent bytes in the opposite order from
+the SPI-programmed image: the board returned 0x9FE520F0 for SPI word
+0xE59FF020. The DTR probe and all copy paths use CMSIS __REV16 to normalize
+each byte pair before comparison, word storage or tail extraction.
+Unaligned starts and 1-3 byte tails are extracted from an aligned Flash word
+and stored bytewise to RAM, without writing beyond the requested segment.
+An explicit edge word may include adjacent Flash bytes but never crosses
+the 64 MB device boundary. Real cache/prefetch behavior at the physical
+Flash end is not board-certified. Segment lengths need no padding.
+No odd-address or single-byte explicit CPU load is issued to DTR Flash.
+
+Hardware and validation
+-----------------------
+The board must provide IO0-IO7, DS and the clock routing for OPI.
+RSK schematic D017892_04, page 12, confirms that CN8 selects between TWO
+physical Flash devices, not between protocols of one device:
+  1-2: OSPI_CS, IC19 MX25UW51245G, 64 MB.
+  2-3: QSPI_CS, IC21 MX25UR51245GMI00, 64 MB.
+Pin 2 is the common OQFLASH_CS0 signal.
+
+Downloading with CN8 2-3 programs the QSPI device, not the OSPI device.
+Moving CN8 after download therefore does not expose the same image to
+8D-8D-8D reads. Do not use live jumper switching as a boot/test procedure.
+Program and verify the intended image on IC19, with CN8 1-2 throughout,
+using a compatible programmer/Flash loader. Then validate Boot ROM SPI
+startup, Loader DTR copying, and the return to SPI on that SAME device.
+Unattended cold boot and reset during DTR remain unverified. Controlled
+hardware-reset measurements are recorded below.
+Do not place breakpoints that require reading Flash during the interval
+where Flash and controller protocols differ.
+
+Debugger variables (Loader BSS):
+  g_bsp_loader_ospi_stage: 1=entering, 2=DTR/copy, 3=restoring, 4=SPI restored.
+  g_bsp_loader_ospi_copy_bmcfg: actual copy-phase bridge/prefetch settings.
+  g_bsp_loader_ospi_copy_source: last aligned word in the last nonempty copy.
+  g_bsp_loader_ospi_copy_sctlr: CPU SCTLR before the payload window.
+  g_bsp_loader_ospi_error:
+    0=none, 1=poll timeout, 2=source outside Flash, 3=controller not SPI,
+    4=Flash not SPI, 5=DTR CR2 mismatch, 6=DTR mapped-read mismatch,
+    7=restored CR2 mismatch, 8=restored SPI mapped-read mismatch, including
+    the cached/noncached last-word check when cacheable sources are enabled.
+Errors invoke the BSP unrecoverable-error hook and stop; no silent fallback.
+The mapped-read probes compare the first vector word before/after switching;
+they are not a full application-image integrity test.
+
+Before accepting on hardware:
+1. Confirm stage=4, error=0, restored PRTMD=0, normal entry to main and PN.
+2. Compare all four RAM segments with the downloaded image.
+3. Test PN persistence, single-byte updates and firmware-update paths in SPI.
+4. Compare cold-boot Flash-copy duration with enable=0 and enable=1, then
+   measure the actual PN FSU endpoint. Do not infer an eightfold speedup:
+   ROM load, protocol-switch overhead and PN initialization remain.
+5. Test power cycles and warm resets, including a reset during DTR loading.
+   A reset that leaves Flash in DTR without resetting Flash may prevent the
+   Boot ROM SPI load. Recovery then requires a Flash hardware reset/power cycle.
+
+Host/emulation checks cannot validate pin routing, DS timing margins,
+unattended boot or the PN FSU time requirement.
+
+GSC boot timing A/B measurement (2026-10-21, before prefetch optimization)
+-------------------------------------------
+startup.c now has guarded boot timestamps. BSP_CFG_LOADER_BOOT_TIMING_ENABLE
+defaults to 1, independently of BSP_CFG_LOADER_OSPI_ENABLE. Timing starts
+after bsp_clock_init() returns; the later GSC reset is skipped. Set timing
+enable to 0 to restore the original near-main GSC initialization behavior.
+Frequency is 25 MHz. The three uint64_t tick snapshots are
+g_bsp_loader_timing_copy_begin, g_bsp_loader_timing_copy_end and
+g_bsp_loader_timing_main. g_bsp_loader_timing_ospi records the tested mode.
+The 64-bit read uses upper/lower/upper with rollover retry.
+
+Five hardware-reset runs per mode on IC19, CN8 fixed at 1-2:
+                          SPI                 DTR
+copy function ticks       2738965             2966833
+copy function ms          109.55860           118.67332
+main ticks                4741499             4969352
+start-to-main ms          189.65996           198.77408
+
+The prefetch-disabled DTR implementation was 9.11412 ms (4.81%) slower to main.
+This is NOT a demonstrated startup speedup. Copy timing includes protocol
+switching, probing and SPI restoration. SPI and DTR use different memory
+access/cache paths; individual costs have not been isolated.
+The window excludes Boot ROM, ROM Loader transfer and Loader clock setup.
+It is NOT complete reset-to-main or PN FSU time.
+
+Both timing modes and timing-disabled DTR built with zero errors/warnings.
+Final DTR Loader footprint is 0x1638 (budget 0x6000). All 1246848 copied RAM
+bytes matched the final ELF; stage=4/error=0 and SPI was restored.
+The 32KB NVdata backup and final dump were identical. DTR firmware was
+restored and normal startup confirmed on COM3 without timing breakpoints.
+See LOADER_OSPI_IMPLEMENTATION.md section 12.4 for details and boundaries.
+
+Four-segment payload-only timing supplement (2026-10-21)
+--------------------------------------------------------
+These are historical prefetch-disabled results; see the final section for
+the hardware-prefetch optimization and its on/off A/B measurements.-
+Added g_bsp_loader_timing_payload_begin/end around the four copy calls
+inside system.c, excluding protocol switching/probes/restoration.
+They share bsp_loader_boot_ticks() with startup.c and use the existing
+timing enable flag. The measured region includes CPU copy logic, REV16,
+loop/parameter handling, barriers and small timestamp overhead.
+
+Five runs per mode, 1246848 bytes, 25 MHz GSC:
+SPI: begin=1485, end=2740449, delta=2738964, 109.55856 ms.
+DTR: begin=1926, end=2968108, delta=2966182, 118.64728 ms.
+DTR is still 9.08872 ms (8.30%) slower for the copy region alone.
+Same-build whole-function windows: SPI 109.56120 ms, DTR 118.67600 ms.
+Whole-function minus payload: SPI 2.64 us, DTR 28.72 us. These differences
+include timestamp/function overhead, not exclusively protocol switching.
+The roughly 9 ms regression lies mainly inside the copy path.
+No copy algorithm or cache policy optimization was made in this test.
+
+Final DTR Loader footprint: 0x166C. Both modes built without errors/warnings.
+Actual ARM machine-code boundary and protocol tests passed again.
+Final copied RAM matched the ELF and 32KB NVdata remained unchanged.
+Restored DTR firmware, stage=4/error=0, SPI restored, normal startup on COM3.
+Details: LOADER_OSPI_IMPLEMENTATION.md section 12.5.
+
+Software validation performed
+-----------------------------
+IAR Debug_App1_STANDARD: compile and link passed, zero warnings/errors.
+The modified system.c also compiled with the original flags of all three
+other application/HyperRAM configurations, zero warnings/errors. Full links
+of those other configurations were not completed.
+BSP_CFG_LOADER_OSPI_ENABLE=0 was separately compiled successfully.
+
+Actual ARM instructions from the IAR-linked image passed 4,800 combinations
+of source/destination alignment and copy length, with destination canaries,
+plus zero-length, invalid-range and last-device-byte tests.
+A simulated xSPI register model exercised bsp_copy_to_ram, checked the
+SPI/DTR/SPI command sequence and register restoration, and compared all four
+real image segments (1,246,848 bytes). This is not a board validation.
+Loader code footprint is 0x15E4 bytes, below the unchanged 0x6000-byte ROM
+transfer budget; Loader code and diagnostic variables reside in BTCM.
+
+Board investigation performed
+-----------------------------
+I-jet programmed the QSPI-selected device with CN8 2-3; its vector word at
+0x60020000 was 0xE59FF020. After pausing immediately before
+bsp_loader_ospi_pins_init (after the SPI baseline probe), switching CN8 to
+1-2 selected the OTHER device. Its DTR CR2 mode and DC readbacks were
+0x0202 and 0x0505, but both direct-command and mapped reads of vector
+address 0x20000 returned 0xFFFFFFFF. The Loader stopped at error argument 6
+before copying application segments. At the failure-function entry,
+g_bsp_loader_ospi_error had not yet been assigned.
+
+The schematic explains why that cross-device image comparison is invalid.
+This does not establish that IC19 was wholly erased.
+
+With permission to overwrite the image range on IC19, its volatile mode
+was restored to SPI and RDID returned 0x3A81C2. The installed IAR programmer
+accepts only 0x1A35C2, so a session-local copy was built with its expected ID
+changed to 0x3A81C2. The SPI reset, read, program, status and sector-erase
+commands remain unchanged and match the MX25UW51245G SPI command set.
+The installation and production IDE programmer settings were not changed.
+The session-local board description limits downloads to
+0x60000000-0x60152FFF; no whole-chip erase was requested.
+
+The verified programmer has subsequently been installed, with administrator
+approval, in the current IAR installation's standard directory:
+  arm\config\flashloader\Renesas\MX25UW51245G.board
+  arm\config\flashloader\Renesas\MX25UW51245G.flash
+  arm\config\flashloader\Renesas\MX25UW51245G.out
+  arm\config\flashloader\Renesas\MX25UW51245G.mac
+The board/device XML uses $TOOLKIT_DIR$ references, with no session paths.
+The algorithm binary is identical to the board-tested session copy; the
+macro is a separately named copy of the original SPI initialization macro.
+All four installed files passed hash checks and XML dependencies resolved.
+Original IAR files and project debugger options were not changed.
+To use it in the IDE, select Debugger > Download > Use flash loader(s) >
+Override default .board file, and choose the installed MX25UW51245G.board.
+The installed board retains the tested image-only range
+0x60000000-0x60152FFF. Update it deliberately if the firmware outgrows that
+range; it is not a general whole-device download configuration.
+Keep CN8 at 1-2 for programming and running. The programmer uses SPI;
+restore SPI or power-cycle first if Flash was left in DTR.
+
+After programming IC19 and keeping CN8 fixed at 1-2, the initial DTR probe
+detected the byte-pair ordering difference described above. A read-only DS
+shift sweep returned the same swapped vector for shifts 0-26; the original
+reference shift 8 was retained, not replaced by an unverified tuning value.
+The Loader copy and probe were corrected using __REV16, rebuilt without
+warnings/errors and retested in emulation (all 4,800 cases and full round
+trip passed with a byte-swapped DTR register/memory model).
+
+The corrected image was downloaded to IC19. With CN8 fixed at 1-2:
+  - Initial SPI vector: 0xE59FF020.
+  - Loader reached stage 4, error 0 after SPI->DTR->SPI.
+  - Restored LIOCFGCS0=0x70000, CMCFG0=8, CMCFG1=0x300, WRAPCFG=0.
+  - Intel HEX RAM dumps passed record checksums and exact range checks.
+  - VECTOR: 68 bytes, USER_PRG: 1,169,712 bytes, USER_DATA: 77,068 bytes;
+    USER_DATA_NONCACHE is empty. All 1,246,848 bytes equal the current ELF.
+  - Execution reached main and the original PN spi_flash_init.
+  - After initialization: g_flash_init=1, g_qspi0_ctrl.open=0x51535049,
+    spi_protocol=0, LIOCFGCS0=0x60000.
+  - Runtime SPI mapped word=0xE59FF020; byte reads at the vector and next
+    address returned 0x20 and 0xF0. No extra Flash erase/program test was run.
+
+These initial results verify the debug-started Loader transfer and SPI
+driver handoff. Subsequent NVdata tests are recorded below. PN network
+operation, power-on Boot ROM loading, reset robustness and FSU timing are
+not certified.
+
+PN NVdata board validation (CN8 fixed at 1-2)
+-------------------------------------------
+The existing Debug_App1_STANDARD firmware was tested without modifying
+application or driver source and without reprogramming its firmware area.
+The board code matched the current ELF; five differing Flash bytes were
+confined to build-date/time strings.
+
+Before testing, both complete 16 KB NV slots were backed up as Intel HEX:
+  SPI_NV_ADDRESS_SEC1: 0x403F0000 (Flash offset 0x003F0000).
+  SPI_NV_ADDRESS_SEC2: 0x403F4000 (Flash offset 0x003F4000).
+The complete 32 KB backup passed record checksums and range checks.
+SHA256 of the raw backup:
+  dab19e04382ece2b533613eb758f8e2892504c586e7fd714477f9fa951f6ea02
+The actual packed NV image is 8,569 bytes (version 0x0411), while its
+linker symbol allocation is padded to 8,572 bytes. Checksums must use the
+actual image length, not the padded symbol size.
+
+COM3 at 115200 baud exposed the existing application console. Its 'n'
+command calls InputAndStoreDeviceName -> ParamStoreDeviceName ->
+Bsp_nv_data_store -> OsFlashProgram -> Task_OsFlashPost. The test name was
+"ospi-nv-cn8-12". This is the PN NVdata path, not a programmer-only test.
+Debugger observations confirmed:
+  - Two erases, two programs, two verifies, each for 8,569 image bytes.
+  - Both slots contained identical data and valid checksum 0xFFFF936A.
+  - All 8,569 saved bytes equaled the runtime NVdata mirror.
+  - Bytes outside each NV image within its slot remained unchanged.
+  - After a hardware-reset boot, PN loaded the first slot. All 8,569 RAM
+    bytes matched the saved test image and Flash had not been rewritten.
+  - Loader remained stage=4/error=0; runtime protocol remained SPI.
+
+IMPORTANT: the live station-name-change operation also produced a PN fatal:
+  PackId 55, ModId 4, Line 197, Device 1.
+This was reproduced with no debugger breakpoints and with the debugger
+disconnected during the console operation; the Flash completion message
+was still printed. Package 55 is LSAS; lsas_cbf_sys.c line 197 raises fatal
+when an OHA completion has response != OHA_OK. The rejection reason has
+not been diagnosed. Successful Flash persistence must NOT be reported as
+successful end-to-end live PN station-name update or full PN acceptance.
+The observations do not establish that CN8 caused this OHA error.
+
+The original complete 32 KB NV backup was restored using the session-local
+programmer with a board range restricted to 0x603F0000-0x603F7FFF.
+Readback proved every restored byte equals the original backup; after
+reset, PN's 8,569-byte RAM NV mirror also equaled the original image.
+All 1,388,544 bytes in firmware range 0x60000000-0x60152FFF were compared
+before/after testing and were unchanged. The temporary test name was not
+left in NVdata. No production source changes were needed for this test.
+Finally, the original configuration was booted without breakpoints; the
+new serial output reported "SYSTEM STARTUP FINISHED, OK" without a fatal.
+The debugger was detached leaving the target running, and COM3 was closed
+and released.
+
+Conclusion: same-device NVdata erase/program/verify and hardware-reset
+readback work with CN8 1-2. Full PN runtime acceptance remains blocked by
+the reproducible OHA error during live station-name change. A real power
+cycle and network-driven configuration/update tests remain outstanding.
+
+Hardware-prefetch DTR A/B validation (2026-10-21, noncache source history)
+-----------------------------------------------------------------------
+CN8 stayed at 1-2. Both firmware variants used DTR, 100 MHz xSPI0,
+10 read dummy clocks, non-cache 0x40000000 source accesses, REV16 and
+the same exact-length copying algorithm. No CPU cache, DMA, optimization
+level, runtime SPI driver or NVdata format changes were made.
+
+BSP_CFG_LOADER_OSPI_PREFETCH_ENABLE=1 is now the default. After the DTR
+configuration and mapped probe pass, wait for MEMACC=0, clear PBUFCLR,
+set BMCFG.PREEN and issue DSB. After copying, clear PREEN, issue DSB,
+wait for MEMACC=0, disable the CS0 bridge, then clear PBUFCLR before
+restoring SPI. PBUFCLR must not be asserted while MEMACC=1.
+The original entry/exit BMCFG and other saved registers are restored.
+g_bsp_loader_ospi_copy_bmcfg records the actual copy-phase BMCFG.
+Set the prefetch flag to 0 and rebuild/download to reproduce the off case.
+
+Five hardware-reset measurements for each mode, with no halted breakpoint
+inside the measured interval. GSC remained 25 MHz, 40 ns per tick.
+                                      Prefetch off       Prefetch on
+Copy-phase BMCFG                       0x00000000         0x00010000
+Restored BMCFG                         0x00000000         0x00000000
+Payload begin/end ticks                1927/2968109       1924/588895
+Payload elapsed ticks                  2966182            586971
+Payload time, mean ms                  118.64728          23.47884
+Whole copy-function time, mean ms       118.67608          23.50796
+Clock-init-complete to main, mean ms    198.77720          103.608896
+Effective payload rate, decimal MB/s    10.509             53.105
+
+Each mode's payload delta was identical across all five runs. Prefetch-on
+main timestamps ranged from 2590222 to 2590223 ticks. Payload time fell by
+95.16844 ms, or 80.21%; speed increased by 5.05337x. The main window fell by
+95.168304 ms. This window excludes Boot ROM and Loader clock initialization;
+it is not a full physical reset-to-main or PN network-ready measurement.
+The two compared variants are both DTR. This test did not change or certify
+the previous ordinary SPI READ command/frequency configuration.
+
+The 148-byte copy functions differed only in one PC-relative literal-pool
+displacement; both resolved to 0x64000001. Hot-loop instructions were equal.
+Both builds completed with zero errors/warnings and passed the five ARM
+machine-code tests, including 4800 alignment/length/boundary combinations
+and the four-segment protocol model. Added checks cover disabling prefetch
+before switching/manual commands, idle-only buffer clearing, copy-phase
+prefetch snapshot consistency and complete saved-register restoration.
+The emulator does not model a real hardware FIFO or electrical timing.
+
+Final prefetch-on board acceptance:
+  - stage=4/error=0.
+  - All eight saved controller registers equal their Loader-entry values.
+  - VECTOR 68, USER_PRG 1169712 and USER_DATA 77068 bytes match the ELF.
+    Total: 1246848 bytes; USER_DATA_NONCACHE is empty.
+  - Complete 32 KB NVdata equals the pre-test backup, SHA256:
+    dab19e04382ece2b533613eb758f8e2892504c586e7fd714477f9fa951f6ea02
+  - Final uninterrupted startup loaded the first NVdata slot and printed
+    "SYSTEM STARTUP FINISHED, OK". No station-name update was requested.
+  - At the end of that round, source, ELF and board retained prefetch enabled. Loader code
+    footprint is 0x16A8, below the 0x6000-byte Boot ROM transfer budget.
+  - Target left running; debugger and COM3 released.
+
+Cold power cycling, reset during DTR, prefetch at the physical Flash end,
+voltage/temperature margins and complete PN FSU acceptance remain untested.
+The independent live station-name OHA failure described above is not fixed
+or re-certified by this prefetch test.
+
+Prefetch plus cacheable-source A/B validation (2026-10-21, current version)
+-------------------------------------------------------------------------
+Both final variants enable DTR, hardware prefetch, 100 MHz xSPI0 and
+10 dummy clocks. CPU global D-cache and MPU configuration are unchanged.
+BSP_CFG_LOADER_OSPI_CACHE_ENABLE selects the Flash source alias:
+  0: noncache 0x40000000, without the new source-cache maintenance.
+  1: cacheable 0x60000000, with paired source-cache invalidation.
+The final retained default is 1. REV16 and exact-length RAM writes remain.
+There is no DMA, compiler optimization-level or runtime SPI/NVdata change.
+
+New BTCM-local helpers in system.c:
+  bsp_loader_ospi_invalidate_source(source, bytesize)
+  bsp_loader_ospi_invalidate_sources()
+They follow BSP address-based maintenance: get D-cache line size from
+CTR.DminLine, align the source down, use __set_DCIVAC for each intersecting
+line, and issue DSB before/after. Zero size does nothing; illegal Flash
+ranges report error 2. Only read-only Flash sources are invalidated, never
+all D-cache or dirty destination RAM. Maintenance covers the four linked
+source ranges, not all 64 MB.
+
+After DTR probe, invalidate old SPI source lines before enabling prefetch
+and sampling payload_begin. After payload_end, disable/flush prefetch,
+isolate the bridge and invalidate DTR source lines before restoring SPI.
+After restoring SPI, the CPU compares the last copied source word through
+cacheable and noncache aliases; a mismatch reports error 8.
+The actual final probe address is 0x60152D08, SPI word 0x00302E30, which
+differs from its DTR raw byte-pair ordering.
+
+Final firmware, five hardware-reset measurements for each mode:
+                                       Prefetch+noncache   Prefetch+cache
+Payload mean ms                        23.478912           11.111600
+Whole function mean ms                 23.508072           11.732880
+Clock-init-complete to main mean ms    103.609712           91.833960
+Payload effective decimal MB/s         53.105              112.211
+Whole function minus payload ms        0.029160            0.621280
+
+Raw ticks: payload_begin/end, whole_begin/end, main:
+  Noncache runs 1-4: 1942/588915, 1455/589157, 2590243.
+  Noncache run 5:   1942/588914, 1455/589156, 2590242.
+  Cache runs 1-5:   9251/287041, 1444/294766, 2295849.
+GSC is 25 MHz. Payload excludes both source-cache maintenance phases.
+Whole-function timing includes both phases, protocol/prefetch management,
+and the new cached SPI handoff check. Measured windows contain no halts.
+
+Payload falls by 12.367312 ms (52.67%), or 2.113x faster. Whole-function
+time falls by 11.775192 ms (50.09%), so maintenance does not erase the gain.
+Outside-payload cost rises by about 0.59212 ms, mainly the source-cache
+maintenance and additional handoff check; these APIs were not separately
+timed. Net whole-function saving is about 11.78 ms, not 12.37 ms.
+
+Actual source snapshots: 0x40152D08 vs 0x60152D08. Both variants record
+SCTLR=0x30C5183D, including D-cache enabled, and copy BMCFG=0x10000.
+Both restore BMCFG=0 and reach stage=4/error=0.
+
+Both final builds have zero errors/warnings. All five actual ARM
+machine-code tests pass, including 4800 alignment/length/boundary cases.
+The model checks the selected source alias and four source-maintenance
+calls at each of stage 1 and stage 3. It does not model real CPU caching,
+cache-line refills, electrical behavior or prefetch FIFO performance.
+
+Final board acceptance:
+  - All eight saved xSPI controller registers restored.
+  - Cached and noncached CPU SPI handoff word comparison passed.
+  - VECTOR 68, USER_PRG 1169712 and USER_DATA 77068 RAM bytes match the
+    actual final downloaded ELF; all 1246848 bytes passed.
+  - Full 32 KB NVdata matches pre-test backup, SHA256:
+    dab19e04382ece2b533613eb758f8e2892504c586e7fd714477f9fa951f6ea02
+  - Uninterrupted final boot read the first NV slot and reported
+    "SYSTEM STARTUP FINISHED, OK". No new NVdata write or live rename.
+  - Current source, ELF and board retain OSPI/prefetch/cacheable-source/
+    timing enabled. Loader ROM footprint 0x17A8, budget 0x6000.
+  - Board running; debugger and COM3 released.
+
+The 91.83396 ms window excludes Boot ROM and Loader clock initialization;
+it is not physical reset-to-main or PN network-ready/FSU certification.
+No power-cycle, interrupted-DTR reset, physical-Flash-end cache/prefetch,
+prefetch-off/cache-on combination or voltage/temperature acceptance was
+performed. Earlier SPI timing and live-rename OHA issues remain separate.
