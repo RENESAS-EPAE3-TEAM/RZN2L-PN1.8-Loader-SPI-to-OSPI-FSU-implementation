@@ -626,6 +626,19 @@ Bsp_nv_data_init()
 - **本文的启动 Loader**：产品固件的一部分，上电搬运 App。
 - **IAR Flash Loader**：调试器使用的烧录算法，不随 PN 正常启动执行。
 
+已将当前使用的烧录器及全部配套文件原样备份到本地 Git 仓库根目录的 [tools](tools)：
+
+| 文件 | 作用 |
+|---|---|
+| [MX25UW51245G.board](tools/MX25UW51245G.board) | 下载入口，引用 `.flash` 并限制下载范围 |
+| [MX25UW51245G.flash](tools/MX25UW51245G.flash) | Flash 器件描述，引用算法和初始化宏 |
+| [MX25UW51245G.out](tools/MX25UW51245G.out) | 已适配、板测使用的烧录算法二进制 |
+| [MX25UW51245G.mac](tools/MX25UW51245G.mac) | C-SPY SPI 总线和引脚初始化宏 |
+
+四个文件均与当前 IAR 安装目录中的版本通过 SHA-256 一致性校验。此目录是可随工程携带的安装文件包，不是重新构建烧录算法的源码包；仍需已安装的 IAR Embedded Workbench for Arm / C-SPY 和目标调试器环境。
+
+在其他电脑使用时，将以上四个文件一起复制到对应 IAR 安装的 `arm\config\flashloader\Renesas` 目录（可能需要管理员权限），再按下文选择安装后的 board 文件。文件保留原 `$TOOLKIT_DIR$` 引用，直接选择备份目录中的 board 不会自动使依赖改为从备份目录加载。此次归档未修改 IAR 安装文件或工程调试器选项。
+
 适配烧录器已安装到：
 
 ```text

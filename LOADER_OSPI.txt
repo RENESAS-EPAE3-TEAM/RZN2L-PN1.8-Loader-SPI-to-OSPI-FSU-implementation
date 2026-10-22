@@ -223,6 +223,15 @@ The algorithm binary is identical to the board-tested session copy; the
 macro is a separately named copy of the original SPI initialization macro.
 All four installed files passed hash checks and XML dependencies resolved.
 Original IAR files and project debugger options were not changed.
+An unchanged backup of all four files is now included in tools relative
+to this document, at the local Git repository root. Each backup passed
+SHA-256 comparison with the current installed file. This is an installation
+bundle, not algorithm rebuild sources. It still requires IAR/C-SPY and the
+target debugger environment. To use it on another computer, copy all four
+files to that IAR installation's arm\config\flashloader\Renesas directory,
+then select the installed board below. The retained $TOOLKIT_DIR$ references
+do not resolve dependencies relative to the backup directory. Archiving
+these files did not change the installation or project debugger options.
 To use it in the IDE, select Debugger > Download > Use flash loader(s) >
 Override default .board file, and choose the installed MX25UW51245G.board.
 The installed board retains the tested image-only range

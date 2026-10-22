@@ -1,0 +1,64 @@
+/******************************************************************************/
+/* System Name  : RZ/N2L RSK flashloader macro                                */
+/* File Name    : FlashRSK_RZN2_SerialFlash.mac                               */
+/* Version      : 1.0                                                         */
+/* Device       :                                                             */
+/* Abstract     : Start-up                                                    */
+/* Tool-Chain   : IAR Embedded Workbench for ARM 9.20.2 or later              */
+/* OS           : not use                                                     */
+/* H/W Platform : RZ/N2L Evaluation Board                                     */
+/* Description  :                                                             */
+/* Limitation   : none                                                        */
+/******************************************************************************/
+
+
+/******************************************************************************/
+/* Function Name : execUserFlashInit()                                        */
+/* Description   :                                                            */
+/******************************************************************************/
+execUserFlashInit()
+{
+	__message "MAC:execUserFlashInit()";
+	__hwReset(0);
+	spibus_setup();													// Initialize the SPIBUS.
+//	enable_btcm();													// Set the base address and access permissions for BTCM.
+//	clear_btcm();													// Initialize the BCTM memory.
+//	clear_atcm();													// Initialize the ACTM memory.
+}
+
+/******************************************************************************/
+/* Function Name : spibus_setup                                               */
+/* Description   :                                                            */
+/******************************************************************************/
+spibus_setup()
+{
+	__message "MAC:spibus_setup()";
+	__writeMemory32(0x0000A50F, 0x81281A00, "Memory"); 				// set PRCRS
+	__writeMemory32(0x0000A50F, 0x80281A10, "Memory"); 				// set PRCRN
+
+	// Enable xSPI module
+	__writeMemory32(0x00001F01,0x80280300, "Memory");  				//  MSTPCRA
+
+	// port Pin setup
+	// P14_2 -> XSPI0_ECS#   PFC142 = 1,PMC142 = 1,ASELP142 = 1
+	// P14_4 -> XSPI0_DS     PFC144 = 0,PMC144 = 1,ASELP144 = 1
+	// P14_6 -> XSPI0_CKP    PFC146 = 0,PMC146 = 1,ASELP146 = 1
+	// P14_7 -> XSPI0_IO0    PFC147 = 0,PMC147 = 1,ASELP147 = 1
+	// P15_0 -> XSPI0_IO1    PFC150 = 0,PMC150 = 1,ASELP150 = 1
+	// P15_1 -> XSPI0_IO2    PFC151 = 0,PMC151 = 1,ASELP151 = 1
+	// P15_2 -> XSPI0_IO3    PFC152 = 0,PMC152 = 1,ASELP152 = 1
+	// P15_7 -> XSPI0_CS0#   PFC157 = 0,PMC157 = 1,ASELP157 = 1
+	// P16_1 -> XSPI0_RESET0 PFC161 = 0,PMC161 = 1,ASELP161 = 1
+	__writeMemory8(0xD4,       0x81030C0E, "Memory");				// set ASELP14
+	__writeMemory8(0x87,       0x81030C0F, "Memory");				// set ASELP15
+	__writeMemory8(0x02,       0x81030C10, "Memory");				// set ASELP16
+	__writeMemory32(0x00000100,0x800A0638, "Memory");				// set PFC14
+	__writeMemory32(0x00000000,0x800A063C, "Memory");				// set PFC15
+	__writeMemory32(0x00000000,0x800A0640, "Memory");				// set PFC16
+	__writeMemory8(0xD4,       0x800A040E, "Memory");				// set PMC14
+	__writeMemory8(0x87,       0x800A040F, "Memory");				// set PMC15
+	__writeMemory8(0x02,       0x800A0410, "Memory");				// set PMC16
+
+	__writeMemory32(0x0000A500, 0x81281A00, "Memory");				// set PRCRS
+	__writeMemory32(0x0000A500, 0x80281A10, "Memory");				// set PRCRN
+}

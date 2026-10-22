@@ -4,11 +4,11 @@
         <JetConnSerialNo>89256</JetConnSerialNo>
         <JetConnFoundProbes />
         <PrevWtdReset>Hardware</PrevWtdReset>
+        <OnlineReset>Software</OnlineReset>
         <DisableInterrupts>0</DisableInterrupts>
         <LeaveRunning>0</LeaveRunning>
         <MultiCoreRunAll>0</MultiCoreRunAll>
         <CpuHaltOnBreakpointSet>0</CpuHaltOnBreakpointSet>
-        <OnlineReset>Software</OnlineReset>
     </Jet>
     <PlDriver>
         <FirstRun>0</FirstRun>
@@ -103,6 +103,11 @@
         <LiveEnabled>0</LiveEnabled>
         <LiveFile />
     </PowerLog>
+    <PowerProbe>
+        <Frequency>10000</Frequency>
+        <Probe0>ITrgPwr</Probe0>
+        <ProbeSetup0>2 1 1 2 0 0</ProbeSetup0>
+    </PowerProbe>
     <TermIOLog>
         <LoggingEnabled>_ 0</LoggingEnabled>
         <LogFile>_ ""</LogFile>
@@ -113,11 +118,6 @@
     <Breakpoints2>
         <Count>0</Count>
     </Breakpoints2>
-    <PowerProbe>
-        <Frequency>10000</Frequency>
-        <Probe0>ITrgPwr</Probe0>
-        <ProbeSetup0>2 1 1 2 0 0</ProbeSetup0>
-    </PowerProbe>
     <Aliases>
         <Count>0</Count>
         <SuppressDialog>0</SuppressDialog>

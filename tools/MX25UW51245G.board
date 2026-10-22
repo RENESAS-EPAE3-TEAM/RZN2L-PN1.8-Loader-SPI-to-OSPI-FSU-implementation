@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<flash_board>
+  <pass>
+    <loader>$TOOLKIT_DIR$/config/flashloader/Renesas/MX25UW51245G.flash</loader>
+    <range>CODE 0x60000000 0x60152fff</range>
+  </pass>
+</flash_board>
