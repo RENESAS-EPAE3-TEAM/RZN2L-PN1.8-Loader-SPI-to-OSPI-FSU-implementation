@@ -9,12 +9,12 @@ for the detail info, please refer to the LOADER_OSPI_IMPLEMENTATION.md and LOADE
 |---|---|
 | Host operating system | Windows |
 | Project baseline | Renesas PROFINET IRT DEVKIT V1.8.0 (PN 1.8) |
-| Installed compiler | IAR ANSI C/C++ Compiler V9.50.1.380/W64 for ARM, verified using `iccarm.exe --version` |
+| Installed compiler | IAR ANSI C/C++ Compiler V9.50.1.380/W64 for ARM |
 | Renesas FSP | 2.0.0, as recorded in [configuration.xml](configuration.xml) |
 | RTOS | FreeRTOS (AWS FreeRTOS configuration) |
 | IAR workspace | [RZN2L_PROFINET_IRT_XSPI_BOOT.eww](RZN2L_PROFINET_IRT_XSPI_BOOT.eww) |
 | Verified build configuration | `Debug_App1_STANDARD` |
-| Flash programming files | Adapted MX25UW51245G `.board`, `.flash`, `.out`, and `.mac` files in [tools](tools) |
+| Flash loader files | Adapted MX25UW51245G `.board`, `.flash`, `.out`, and `.mac` files in [tools](tools) |
 
 
 
